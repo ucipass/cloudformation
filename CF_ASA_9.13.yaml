@@ -3,7 +3,7 @@ Parameters:
   EnvironmentName:
     Description: AAn environment name that will be prefixed to resource names
     Type: String
-    Default: AACF-ASA913
+    Default: AACF
   VpcCIDR:
     Description: Please enter the IP range (CIDR notation) for this VPC
     Type: String
@@ -14,12 +14,28 @@ Parameters:
       first Availability Zone
     Type: String
     Default: 172.30.11.0/24
+  PublicSubnet1ASAIP:
+    Description: >-
+      Please enter the ASA IP Address for the public subnet
+    Type: String
+    Default: 172.30.11.11
+  PublicSubnet2CIDR:
+    Description: >-
+      Please enter the IP range (CIDR notation) for the public subnet in the
+      first Availability Zone
+    Type: String
+    Default: 172.30.12.0/24
   PrivateSubnet1CIDR:
     Description: >-
       Please enter the IP range (CIDR notation) for the private subnet in the
       second Availability Zone
     Type: String
     Default: 172.30.21.0/24
+  PrivateSubnet1ASAIP:
+    Description: >-
+      Please enter the ASA IP Address for the private subnet
+    Type: String
+    Default: 172.30.21.21
   Password:
     Description: Please enter the Enable and Terminal password
     Type: String
@@ -63,7 +79,7 @@ Resources:
       Tags:
         - Key: Name
           Value:
-            Ref: EnvironmentName
+            Fn::Sub: ${EnvironmentName}-InternetGateway
   InternetGatewayAttachment:
     Type: 'AWS::EC2::VPCGatewayAttachment'
     Properties:
@@ -85,7 +101,8 @@ Resources:
       MapPublicIpOnLaunch: false
       Tags:
         - Key: Name
-          Value: Private Subnet (AZ1)
+          Value:
+            Fn::Sub: ${EnvironmentName}-PrivateSubnet1
   PublicSubnet1:
     Type: 'AWS::EC2::Subnet'
     Properties:
@@ -100,7 +117,24 @@ Resources:
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
-          Value: Public Subnet (AZ1)
+          Value:
+            Fn::Sub: ${EnvironmentName}-PublicSubnet1
+  PublicSubnet2:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId:
+        Ref: VPC
+      AvailabilityZone:
+        'Fn::Select':
+          - 0
+          - 'Fn::GetAZs': ''
+      CidrBlock:
+        Ref: PublicSubnet2CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: ${EnvironmentName}-PublicSubnet2
   PublicRouteTable:
     Type: 'AWS::EC2::RouteTable'
     Properties:
@@ -108,7 +142,8 @@ Resources:
         Ref: VPC
       Tags:
         - Key: Name
-          Value: Public Routes
+          Value:
+            Fn::Sub: ${EnvironmentName}-PublicRouteTable
   PrivateRouteTable:
     Type: 'AWS::EC2::RouteTable'
     Properties:
@@ -116,7 +151,8 @@ Resources:
         Ref: VPC
       Tags:
         - Key: Name
-          Value: Private Routes
+          Value:
+            Fn::Sub: ${EnvironmentName}-PublicRouteTable
   DefaultPublicRoute:
     Type: 'AWS::EC2::Route'
     DependsOn: InternetGatewayAttachment
@@ -133,6 +169,13 @@ Resources:
         Ref: PublicRouteTable
       SubnetId:
         Ref: PublicSubnet1
+  PublicSubnet2RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId:
+        Ref: PublicRouteTable
+      SubnetId:
+        Ref: PublicSubnet2
   PrivateSubnet1RouteTableAssociation:
     Type: 'AWS::EC2::SubnetRouteTableAssociation'
     Properties:
@@ -145,7 +188,8 @@ Resources:
     Properties:
       Tags:
         - Key: Name
-          Value: SG
+          Value:
+            Fn::Sub: ${EnvironmentName}-SG
       VpcId:
         Ref: VPC
       GroupDescription: Enable ALL
@@ -158,14 +202,35 @@ Resources:
     Properties:
       Tags:
         - Key: Name
-          Value: SG
+          Value:
+            Fn::Sub: ${EnvironmentName}-ASAeth0
       Description: ASAv GIG0/0
       SourceDestCheck: 'false'
       GroupSet:
         - Ref: InstanceSecurityGroup
+      # PrivateIpAddress: 172.30.11.11
+      PrivateIpAddress:
+        Ref: PublicSubnet1ASAIP
+      SubnetId:
+        Ref: PublicSubnet1
+  NetworkInterfaceGIG1:
+    Type: 'AWS::EC2::NetworkInterface'
+    DependsOn: InstanceSecurityGroup
+    Properties:
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: ${EnvironmentName}-ASAeth1
+      Description: ASAv GIG0/1
+      SourceDestCheck: 'false'
+      GroupSet:
+        - Ref: InstanceSecurityGroup
+      # PrivateIpAddress: 172.30.21.11
+      PrivateIpAddress:
+        Ref: PrivateSubnet1ASAIP
       SubnetId:
         Ref: PrivateSubnet1
-  NetworkInterfaceAttachment:
+  NetworkInterfaceAttachment1:
     Type: 'AWS::EC2::NetworkInterfaceAttachment'
     DependsOn: ASAvInstance1
     Properties:
@@ -174,9 +239,20 @@ Resources:
       NetworkInterfaceId:
         Ref: NetworkInterfaceGIG0
       DeviceIndex: 1
+  NetworkInterfaceAttachment2:
+    Type: 'AWS::EC2::NetworkInterfaceAttachment'
+    DependsOn: ASAvInstance1
+    Properties:
+      InstanceId:
+        Ref: ASAvInstance1
+      NetworkInterfaceId:
+        Ref: NetworkInterfaceGIG1
+      DeviceIndex: 2
   ASAvInstance1:
     Type: 'AWS::EC2::Instance'
-    DependsOn: NetworkInterfaceGIG0
+    DependsOn: 
+      - NetworkInterfaceGIG0
+      - NetworkInterfaceGIG1
     Properties:
       ImageId:
         'Fn::FindInMap':
@@ -223,7 +299,7 @@ Resources:
       Tags:
         - Key: Name
           Value:
-            'Fn::Sub': '\${EnvironmentName}'
+            'Fn::Sub': '${EnvironmentName}'
 Outputs:
   PublicIp:
     Description: ASA Public IP
